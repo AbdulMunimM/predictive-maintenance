@@ -21,7 +21,7 @@ st.set_page_config(
 # Local backend for development/testing.
 # For deployment, replace this with the deployed FastAPI URL
 # through Streamlit secrets.
-API_BASE_URL = "https://predictive-maintenance-3p11.onrender.com"
+API_BASE_URL = st.secrets["API_BASE_URL"]
 
 PREDICT_URL = f"{API_BASE_URL}/predict"
 EXPLAIN_URL = f"{API_BASE_URL}/explain"
