@@ -64,11 +64,9 @@ def load_sensor_data():
 
 
 try:
-
     sensor_data = load_sensor_data()
 
 except Exception as e:
-
     st.error("Unable to load the AI4I sensor dataset.")
     st.caption(f"Technical details: {e}")
     st.stop()
@@ -84,13 +82,14 @@ defaults = {
     "last_payload": None,
     "explanation": None,
 
+    # Manual history
+    "manual_history": [],
+
     # Sensor replay
     "monitoring": False,
     "current_row": 0,
     "sensor_history": [],
-
-    # Manual analysis history
-    "manual_history": []
+    "replay_speed": 2
 }
 
 for key, value in defaults.items():
@@ -260,26 +259,252 @@ selected_mode = st.radio(
     key="mode_selector"
 )
 
+
 if selected_mode != st.session_state.mode:
 
     st.session_state.mode = selected_mode
-
     st.session_state.result = None
     st.session_state.last_payload = None
     st.session_state.explanation = None
 
-    # Stop replay when switching modes
     st.session_state.monitoring = False
+
+    if selected_mode == "Sensor Stream Replay":
+
+        st.session_state.current_row = 0
+        st.session_state.sensor_history = []
+
+
+# ============================================================
+# SHARED PREDICTION DISPLAY
+# ============================================================
+
+def display_prediction(result):
+
+    # --------------------------------------------------------
+    # Maintenance status
+    # --------------------------------------------------------
+
+    status = result["maintenance_status"]
+
+    if status == "CRITICAL":
+
+        st.markdown(
+            """
+            <div class="status-card status-critical">
+                <div class="status-title">
+                    🔴 CRITICAL
+                </div>
+                <div class="status-text">
+                    Machine failure risk detected.
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+    elif status == "FAILURE_DETECTED":
+
+        st.markdown(
+            """
+            <div class="status-card status-warning">
+                <div class="status-title">
+                    🟠 FAILURE DETECTED
+                </div>
+                <div class="status-text">
+                    The model predicts a machine failure.
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+    else:
+
+        st.markdown(
+            """
+            <div class="status-card status-normal">
+                <div class="status-title">
+                    🟢 NORMAL
+                </div>
+                <div class="status-text">
+                    No machine failure is currently predicted.
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+
+    # --------------------------------------------------------
+    # Recommendation
+    # --------------------------------------------------------
+
+    st.markdown(
+        '<div class="section-title">'
+        'Maintenance Recommendation'
+        '</div>',
+        unsafe_allow_html=True
+    )
+
+    st.info(
+        result["recommended_action"]
+    )
+
+
+    # --------------------------------------------------------
+    # Prediction summary
+    # --------------------------------------------------------
+
+    predicted_modes = [
+        mode
+        for mode, data
+        in result["failure_modes"].items()
+        if data["predicted"]
+    ]
+
+    likely_mode = (
+        ", ".join(predicted_modes)
+        if predicted_modes
+        else "None"
+    )
+
+    st.markdown(
+        '<div class="section-title">'
+        'Prediction Summary'
+        '</div>',
+        unsafe_allow_html=True
+    )
+
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+
+        st.markdown(
+            f"""
+            <div class="metric-card">
+                <div class="metric-label">
+                    Failure Risk
+                </div>
+                <div class="metric-value">
+                    {result["failure_probability"] * 100:.2f}%
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+    with col2:
+
+        st.markdown(
+            f"""
+            <div class="metric-card">
+                <div class="metric-label">
+                    Likely Failure Mode
+                </div>
+                <div class="metric-value">
+                    {likely_mode}
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+    with col3:
+
+        machine_status = (
+            "FAILURE RISK"
+            if result["machine_failure"]
+            else "NORMAL"
+        )
+
+        st.markdown(
+            f"""
+            <div class="metric-card">
+                <div class="metric-label">
+                    Machine Status
+                </div>
+                <div class="metric-value">
+                    {machine_status}
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+
+    # --------------------------------------------------------
+    # Failure risk
+    # --------------------------------------------------------
+
+    st.markdown(
+        '<div class="section-title">'
+        'Failure Risk'
+        '</div>',
+        unsafe_allow_html=True
+    )
+
+    st.progress(
+        min(
+            max(result["failure_probability"], 0.0),
+            1.0
+        )
+    )
+
+
+    # --------------------------------------------------------
+    # Failure modes
+    # --------------------------------------------------------
+
+    st.markdown(
+        '<div class="section-title">'
+        'Failure Mode Analysis'
+        '</div>',
+        unsafe_allow_html=True
+    )
+
+    mode_columns = st.columns(4)
+
+    for column, (mode, data) in zip(
+        mode_columns,
+        result["failure_modes"].items()
+    ):
+
+        with column:
+
+            probability = data["probability"]
+
+            st.metric(
+                mode,
+                f"{probability * 100:.2f}%"
+            )
+
+            st.progress(
+                min(
+                    max(probability, 0.0),
+                    1.0
+                )
+            )
+
+            if data["predicted"]:
+
+                st.error("🔴 Predicted")
+
+            else:
+
+                st.success("🟢 Not predicted")
 
 
 # ============================================================
 # MANUAL ANALYSIS MODE
 # ============================================================
 
-if st.session_state.mode == "Manual Analysis":
+if selected_mode == "Manual Analysis":
 
     st.markdown(
-        '<div class="section-title">Manual Machine Analysis</div>',
+        '<div class="section-title">'
+        'Manual Machine Analysis'
+        '</div>',
         unsafe_allow_html=True
     )
 
@@ -346,7 +571,8 @@ if st.session_state.mode == "Manual Analysis":
     analyze = st.button(
         "🔍 Analyze Machine",
         type="primary",
-        use_container_width=True
+        use_container_width=True,
+        key="manual_analyze"
     )
 
     if analyze:
@@ -362,7 +588,9 @@ if st.session_state.mode == "Manual Analysis":
 
         try:
 
-            with st.spinner("Analyzing machine condition..."):
+            with st.spinner(
+                "Analyzing machine condition..."
+            ):
 
                 response = requests.post(
                     PREDICT_URL,
@@ -374,54 +602,58 @@ if st.session_state.mode == "Manual Analysis":
 
                 result = response.json()
 
-                st.session_state.result = result
-                st.session_state.last_payload = payload
-                st.session_state.explanation = None
 
-                # ------------------------------------------------
-                # Store manual analysis history
-                # ------------------------------------------------
+            st.session_state.result = result
+            st.session_state.last_payload = payload
+            st.session_state.explanation = None
 
-                predicted_modes = [
-                    mode
-                    for mode, data
-                    in result["failure_modes"].items()
-                    if data["predicted"]
-                ]
 
-                manual_record = {
-                    "Time": datetime.now().strftime("%H:%M:%S"),
-                    "Machine Type": machine_type,
-                    "Air Temp [K]": air_temperature,
-                    "Process Temp [K]": process_temperature,
-                    "Speed [rpm]": rotational_speed,
-                    "Torque [Nm]": torque,
-                    "Tool Wear [min]": tool_wear,
-                    "Failure Risk": (
-                        result["failure_probability"] * 100
-                    ),
-                    "Failure": (
-                        "YES"
-                        if result["machine_failure"]
-                        else "NO"
-                    ),
-                    "Failure Mode": (
-                        ", ".join(predicted_modes)
-                        if predicted_modes
-                        else "-"
-                    ),
-                    "Status": result["maintenance_status"]
-                }
+            # ------------------------------------------------
+            # Manual history
+            # ------------------------------------------------
 
-                st.session_state.manual_history.append(
-                    manual_record
-                )
+            predicted_modes = [
+                mode
+                for mode, data
+                in result["failure_modes"].items()
+                if data["predicted"]
+            ]
+
+            manual_record = {
+                "Time": datetime.now().strftime("%H:%M:%S"),
+                "Machine Type": machine_type,
+                "Air Temp [K]": air_temperature,
+                "Process Temp [K]": process_temperature,
+                "Speed [rpm]": rotational_speed,
+                "Torque [Nm]": torque,
+                "Tool Wear [min]": tool_wear,
+                "Failure Risk": (
+                    result["failure_probability"] * 100
+                ),
+                "Failure": (
+                    "YES"
+                    if result["machine_failure"]
+                    else "NO"
+                ),
+                "Failure Mode": (
+                    ", ".join(predicted_modes)
+                    if predicted_modes
+                    else "-"
+                ),
+                "Status": result["maintenance_status"]
+            }
+
+            st.session_state.manual_history.append(
+                manual_record
+            )
+
 
         except requests.exceptions.Timeout:
 
             st.error(
                 "The predictive-maintenance API took too long to respond."
             )
+
 
         except requests.exceptions.RequestException as e:
 
@@ -434,23 +666,168 @@ if st.session_state.mode == "Manual Analysis":
             )
 
 
+    # ========================================================
+    # CURRENT MANUAL RESULT
+    # ========================================================
+
+    if st.session_state.result is not None:
+
+        result = st.session_state.result
+
+        display_prediction(result)
+
+
+        # ====================================================
+        # MANUAL HISTORY
+        # ====================================================
+
+        if st.session_state.manual_history:
+
+            st.divider()
+
+            st.markdown(
+                '<div class="section-title">'
+                'Manual Analysis History'
+                '</div>',
+                unsafe_allow_html=True
+            )
+
+            st.caption(
+                f"{len(st.session_state.manual_history)} "
+                "manual analyses performed in this session."
+            )
+
+            history_df = pd.DataFrame(
+                st.session_state.manual_history
+            )
+
+            history_df["Failure Risk"] = (
+                history_df["Failure Risk"]
+                .map(lambda x: f"{x:.2f}%")
+            )
+
+            st.dataframe(
+                history_df,
+                use_container_width=True,
+                hide_index=True
+            )
+
+
+        # ====================================================
+        # SHAP EXPLANATION
+        # ====================================================
+
+        if result["machine_failure"]:
+
+            st.divider()
+
+            st.markdown(
+                '<div class="section-title">'
+                'Model Explanation'
+                '</div>',
+                unsafe_allow_html=True
+            )
+
+            explain_button = st.button(
+                "🔎 Why was this machine flagged?",
+                use_container_width=True,
+                key="manual_explain"
+            )
+
+            if explain_button:
+
+                try:
+
+                    with st.spinner(
+                        "Generating model explanation..."
+                    ):
+
+                        response = requests.post(
+                            EXPLAIN_URL,
+                            json=st.session_state.last_payload,
+                            timeout=60
+                        )
+
+                        response.raise_for_status()
+
+                        st.session_state.explanation = (
+                            response.json()
+                        )
+
+                except requests.exceptions.RequestException as e:
+
+                    st.error(
+                        "Unable to generate the model explanation."
+                    )
+
+                    st.caption(
+                        f"Technical details: {e}"
+                    )
+
+
+            if st.session_state.explanation is not None:
+
+                explanation = st.session_state.explanation
+
+                st.info(
+                    "SHAP explains how individual features "
+                    "influenced the machine-failure prediction."
+                )
+
+                st.write(
+                    f"Base model score: "
+                    f"{explanation['base_value']:.3f}"
+                )
+
+                for item in explanation["contributions"]:
+
+                    feature_name = (
+                        item["feature"]
+                        .replace("num__", "")
+                        .replace("cat__", "")
+                    )
+
+                    shap_value = item["shap_value"]
+
+                    if shap_value >= 0:
+
+                        st.error(
+                            f"↑ {feature_name}: "
+                            f"+{shap_value:.3f}"
+                        )
+
+                    else:
+
+                        st.success(
+                            f"↓ {feature_name}: "
+                            f"{shap_value:.3f}"
+                        )
+
+
 # ============================================================
-# SENSOR STREAM REPLAY
+# SENSOR STREAM REPLAY MODE
 # ============================================================
 
 else:
 
     st.markdown(
-        '<div class="section-title">Automatic Sensor Stream</div>',
+        '<div class="section-title">'
+        'Automatic Sensor Stream'
+        '</div>',
         unsafe_allow_html=True
     )
 
     st.caption(
-        "AI4I 2020 records are replayed automatically as "
-        "simulated sensor readings."
+        "Historical AI4I records are replayed as simulated "
+        "machine sensor readings."
     )
 
     control1, control2, control3, control4 = st.columns(4)
+
+
+    # --------------------------------------------------------
+    # Start / Stop
+    # --------------------------------------------------------
 
     with control1:
 
@@ -458,7 +835,8 @@ else:
 
             if st.button(
                 "⏹ Stop Monitoring",
-                use_container_width=True
+                use_container_width=True,
+                key="stop_monitoring"
             ):
 
                 st.session_state.monitoring = False
@@ -469,7 +847,8 @@ else:
             if st.button(
                 "▶ Start Monitoring",
                 type="primary",
-                use_container_width=True
+                use_container_width=True,
+                key="start_monitoring"
             ):
 
                 st.session_state.monitoring = True
@@ -479,29 +858,46 @@ else:
                 st.session_state.explanation = None
                 st.rerun()
 
+
+    # --------------------------------------------------------
+    # Restart
+    # --------------------------------------------------------
+
     with control2:
 
         if st.button(
             "↺ Restart Stream",
-            use_container_width=True
+            use_container_width=True,
+            key="restart_stream"
         ):
 
+            st.session_state.monitoring = False
             st.session_state.current_row = 0
             st.session_state.sensor_history = []
             st.session_state.result = None
             st.session_state.explanation = None
-            st.session_state.monitoring = False
+
             st.rerun()
+
+
+    # --------------------------------------------------------
+    # Replay speed
+    # --------------------------------------------------------
 
     with control3:
 
-        replay_speed = st.selectbox(
+        st.session_state.replay_speed = st.selectbox(
             "Replay Speed",
             [1, 2, 3, 5],
             index=1,
             format_func=lambda x: f"Every {x} sec",
-            key="replay_speed"
+            key="speed_selector"
         )
+
+
+    # --------------------------------------------------------
+    # Records
+    # --------------------------------------------------------
 
     with control4:
 
@@ -510,21 +906,9 @@ else:
             f"{len(sensor_data):,}"
         )
 
-    if st.session_state.monitoring:
-
-        st.success(
-            "🟢 LIVE MONITORING — sensor records are being replayed automatically."
-        )
-
-    else:
-
-        st.info(
-            "Monitoring is paused. Start the sensor replay to begin."
-        )
-
 
 # ============================================================
-# SENSOR STREAM AUTO-REFRESH FRAGMENT
+# SENSOR REPLAY FRAGMENT
 # ============================================================
 
 @st.fragment(
@@ -537,20 +921,31 @@ else:
         else None
     )
 )
-def live_sensor_monitor():
+def sensor_replay():
 
     if st.session_state.mode != "Sensor Stream Replay":
+
         return
+
 
     if not st.session_state.monitoring:
 
+        st.info(
+            "Monitoring is paused. "
+            "Start the sensor replay to begin."
+        )
+
         return
+
 
     # --------------------------------------------------------
     # End of dataset
     # --------------------------------------------------------
 
-    if st.session_state.current_row >= len(sensor_data):
+    if (
+        st.session_state.current_row
+        >= len(sensor_data)
+    ):
 
         st.session_state.monitoring = False
 
@@ -560,8 +955,9 @@ def live_sensor_monitor():
 
         return
 
+
     # --------------------------------------------------------
-    # Current record
+    # Read current sensor record
     # --------------------------------------------------------
 
     row_number = st.session_state.current_row
@@ -590,6 +986,7 @@ def live_sensor_monitor():
         row["Tool wear [min]"]
     )
 
+
     payload = {
         "Type": machine_type,
         "air_temperature": air_temperature,
@@ -601,7 +998,7 @@ def live_sensor_monitor():
 
 
     # --------------------------------------------------------
-    # Send sensor record to API
+    # API prediction
     # --------------------------------------------------------
 
     try:
@@ -616,17 +1013,16 @@ def live_sensor_monitor():
 
         result = response.json()
 
-        st.session_state.result = result
-        st.session_state.last_payload = payload
-        st.session_state.explanation = None
 
     except requests.exceptions.Timeout:
 
         st.error(
-            "The predictive-maintenance API took too long to respond."
+            "The predictive-maintenance API "
+            "took too long to respond."
         )
 
         return
+
 
     except requests.exceptions.RequestException as e:
 
@@ -642,7 +1038,15 @@ def live_sensor_monitor():
 
 
     # --------------------------------------------------------
-    # Predicted failure modes
+    # Store result
+    # --------------------------------------------------------
+
+    st.session_state.result = result
+    st.session_state.last_payload = payload
+
+
+    # --------------------------------------------------------
+    # Failure modes
     # --------------------------------------------------------
 
     predicted_modes = [
@@ -654,7 +1058,7 @@ def live_sensor_monitor():
 
 
     # --------------------------------------------------------
-    # Store replay history
+    # Add history
     # --------------------------------------------------------
 
     history_record = {
@@ -685,7 +1089,26 @@ def live_sensor_monitor():
         st.session_state.sensor_history[-20:]
     )
 
+
+    # --------------------------------------------------------
+    # Advance to next record
+    # --------------------------------------------------------
+
     st.session_state.current_row += 1
+
+
+    # ========================================================
+    # LIVE MONITORING HEADER
+    # ========================================================
+
+    st.success(
+        "🟢 LIVE MONITORING — sensor records are being "
+        "replayed automatically."
+    )
+
+    st.caption(
+        f"Record {row_number + 1:,} of {len(sensor_data):,}"
+    )
 
 
     # ========================================================
@@ -700,6 +1123,7 @@ def live_sensor_monitor():
     )
 
     sensor_col1, sensor_col2, sensor_col3 = st.columns(3)
+
 
     with sensor_col1:
 
@@ -731,6 +1155,7 @@ def live_sensor_monitor():
             unsafe_allow_html=True
         )
 
+
     with sensor_col2:
 
         st.markdown(
@@ -760,6 +1185,7 @@ def live_sensor_monitor():
             """,
             unsafe_allow_html=True
         )
+
 
     with sensor_col3:
 
@@ -796,514 +1222,12 @@ def live_sensor_monitor():
     # LIVE PREDICTION
     # ========================================================
 
-    status = result["maintenance_status"]
-
-    if status == "CRITICAL":
-
-        st.markdown(
-            """
-            <div class="status-card status-critical">
-                <div class="status-title">
-                    🔴 CRITICAL
-                </div>
-                <div class="status-text">
-                    Machine failure risk detected.
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-
-    elif status == "FAILURE_DETECTED":
-
-        st.markdown(
-            """
-            <div class="status-card status-warning">
-                <div class="status-title">
-                    🟠 FAILURE DETECTED
-                </div>
-                <div class="status-text">
-                    The model predicts a machine failure.
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-
-    else:
-
-        st.markdown(
-            """
-            <div class="status-card status-normal">
-                <div class="status-title">
-                    🟢 NORMAL
-                </div>
-                <div class="status-text">
-                    No machine failure is currently predicted.
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
+    display_prediction(result)
 
 
     # ========================================================
-    # PREDICTION SUMMARY
+    # RECENT SENSOR HISTORY
     # ========================================================
-
-    metric_col1, metric_col2, metric_col3 = st.columns(3)
-
-    with metric_col1:
-
-        st.metric(
-            "Failure Risk",
-            f"{result['failure_probability'] * 100:.2f}%"
-        )
-
-    with metric_col2:
-
-        st.metric(
-            "Likely Failure Mode",
-            (
-                ", ".join(predicted_modes)
-                if predicted_modes
-                else "None"
-            )
-        )
-
-    with metric_col3:
-
-        st.metric(
-            "Machine Status",
-            (
-                "FAILURE RISK"
-                if result["machine_failure"]
-                else "NORMAL"
-            )
-        )
-
-
-    # ========================================================
-    # FAILURE RISK
-    # ========================================================
-
-    st.progress(
-        min(
-            max(result["failure_probability"], 0.0),
-            1.0
-        )
-    )
-
-
-    # ========================================================
-    # FAILURE MODES
-    # ========================================================
-
-    st.markdown(
-        '<div class="section-title">Failure Mode Analysis</div>',
-        unsafe_allow_html=True
-    )
-
-    mode_cols = st.columns(4)
-
-    for column, (mode, data) in zip(
-        mode_cols,
-        result["failure_modes"].items()
-    ):
-
-        with column:
-
-            probability = data["probability"]
-
-            st.metric(
-                mode,
-                f"{probability * 100:.2f}%"
-            )
-
-            st.progress(
-                min(
-                    max(probability, 0.0),
-                    1.0
-                )
-            )
-
-            if data["predicted"]:
-
-                st.error("🔴 Predicted")
-
-            else:
-
-                st.success("🟢 Not predicted")
-
-
-    # ========================================================
-    # RECOMMENDATION
-    # ========================================================
-
-    st.info(
-        f"**Maintenance recommendation:** "
-        f"{result['recommended_action']}"
-    )
-
-
-# ============================================================
-# RUN SENSOR MONITOR
-# ============================================================
-
-live_sensor_monitor()
-
-
-# ============================================================
-# MANUAL RESULT DISPLAY
-# ============================================================
-
-if (
-    st.session_state.mode == "Manual Analysis"
-    and st.session_state.result is not None
-):
-
-    result = st.session_state.result
-
-
-    # ========================================================
-    # MAINTENANCE STATUS
-    # ========================================================
-
-    st.divider()
-
-    status = result["maintenance_status"]
-
-    if status == "CRITICAL":
-
-        st.markdown(
-            """
-            <div class="status-card status-critical">
-                <div class="status-title">
-                    🔴 CRITICAL
-                </div>
-                <div class="status-text">
-                    Machine failure risk detected.
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-
-    elif status == "FAILURE_DETECTED":
-
-        st.markdown(
-            """
-            <div class="status-card status-warning">
-                <div class="status-title">
-                    🟠 FAILURE DETECTED
-                </div>
-                <div class="status-text">
-                    The model predicts a machine failure.
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-
-    else:
-
-        st.markdown(
-            """
-            <div class="status-card status-normal">
-                <div class="status-title">
-                    🟢 NORMAL
-                </div>
-                <div class="status-text">
-                    No machine failure is currently predicted.
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-
-
-    # ========================================================
-    # RECOMMENDATION
-    # ========================================================
-
-    st.markdown(
-        '<div class="section-title">Maintenance Recommendation</div>',
-        unsafe_allow_html=True
-    )
-
-    st.info(
-        result["recommended_action"]
-    )
-
-
-    # ========================================================
-    # SUMMARY
-    # ========================================================
-
-    st.markdown(
-        '<div class="section-title">Prediction Summary</div>',
-        unsafe_allow_html=True
-    )
-
-    summary1, summary2, summary3 = st.columns(3)
-
-    with summary1:
-
-        st.markdown(
-            f"""
-            <div class="metric-card">
-                <div class="metric-label">
-                    Failure Risk
-                </div>
-                <div class="metric-value">
-                    {result["failure_probability"] * 100:.2f}%
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-
-    with summary2:
-
-        predicted_modes = [
-            mode
-            for mode, data
-            in result["failure_modes"].items()
-            if data["predicted"]
-        ]
-
-        st.markdown(
-            f"""
-            <div class="metric-card">
-                <div class="metric-label">
-                    Likely Failure Mode
-                </div>
-                <div class="metric-value">
-                    {
-                        ", ".join(predicted_modes)
-                        if predicted_modes
-                        else "None"
-                    }
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-
-    with summary3:
-
-        st.markdown(
-            f"""
-            <div class="metric-card">
-                <div class="metric-label">
-                    Machine Status
-                </div>
-                <div class="metric-value">
-                    {
-                        "FAILURE RISK"
-                        if result["machine_failure"]
-                        else "NORMAL"
-                    }
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-
-
-    # ========================================================
-    # FAILURE RISK
-    # ========================================================
-
-    st.markdown(
-        '<div class="section-title">Failure Risk</div>',
-        unsafe_allow_html=True
-    )
-
-    st.progress(
-        min(
-            max(result["failure_probability"], 0.0),
-            1.0
-        )
-    )
-
-
-    # ========================================================
-    # FAILURE MODES
-    # ========================================================
-
-    st.markdown(
-        '<div class="section-title">Failure Mode Analysis</div>',
-        unsafe_allow_html=True
-    )
-
-    mode_cols = st.columns(4)
-
-    for column, (mode, data) in zip(
-        mode_cols,
-        result["failure_modes"].items()
-    ):
-
-        with column:
-
-            probability = data["probability"]
-
-            st.metric(
-                mode,
-                f"{probability * 100:.2f}%"
-            )
-
-            st.progress(
-                min(
-                    max(probability, 0.0),
-                    1.0
-                )
-            )
-
-            if data["predicted"]:
-
-                st.error("🔴 Predicted")
-
-            else:
-
-                st.success("🟢 Not predicted")
-
-
-    # ========================================================
-    # MANUAL ANALYSIS HISTORY
-    # ========================================================
-
-    if st.session_state.manual_history:
-
-        st.divider()
-
-        st.markdown(
-            '<div class="section-title">'
-            'Manual Analysis History'
-            '</div>',
-            unsafe_allow_html=True
-        )
-
-        st.caption(
-            f"{len(st.session_state.manual_history)} "
-            "manual analyses performed in this session."
-        )
-
-        manual_history_df = pd.DataFrame(
-            st.session_state.manual_history
-        )
-
-        manual_history_df["Failure Risk"] = (
-            manual_history_df["Failure Risk"]
-            .map(lambda x: f"{x:.2f}%")
-        )
-
-        st.dataframe(
-            manual_history_df,
-            use_container_width=True,
-            hide_index=True
-        )
-
-
-    # ========================================================
-    # SHAP EXPLANATION
-    # ========================================================
-
-    if result["machine_failure"]:
-
-        st.divider()
-
-        st.markdown(
-            '<div class="section-title">'
-            'Model Explanation'
-            '</div>',
-            unsafe_allow_html=True
-        )
-
-        explain_button = st.button(
-            "🔎 Why was this machine flagged?",
-            use_container_width=True,
-            key="manual_explain_button"
-        )
-
-        if explain_button:
-
-            try:
-
-                with st.spinner(
-                    "Generating model explanation..."
-                ):
-
-                    explanation_response = requests.post(
-                        EXPLAIN_URL,
-                        json=st.session_state.last_payload,
-                        timeout=60
-                    )
-
-                    explanation_response.raise_for_status()
-
-                    st.session_state.explanation = (
-                        explanation_response.json()
-                    )
-
-            except requests.exceptions.RequestException as e:
-
-                st.error(
-                    "Unable to generate the model explanation."
-                )
-
-                st.caption(
-                    f"Technical details: {e}"
-                )
-
-
-        if st.session_state.explanation is not None:
-
-            explanation = st.session_state.explanation
-
-            st.info(
-                "SHAP explains how individual features "
-                "influenced the machine-failure prediction."
-            )
-
-            st.write(
-                f"Base model score: "
-                f"{explanation['base_value']:.3f}"
-            )
-
-            for item in explanation["contributions"]:
-
-                feature_name = (
-                    item["feature"]
-                    .replace("num__", "")
-                    .replace("cat__", "")
-                )
-
-                shap_value = item["shap_value"]
-
-                if shap_value >= 0:
-
-                    st.error(
-                        f"↑ {feature_name}: "
-                        f"+{shap_value:.3f}"
-                    )
-
-                else:
-
-                    st.success(
-                        f"↓ {feature_name}: "
-                        f"{shap_value:.3f}"
-                    )
-
-
-# ============================================================
-# SENSOR REPLAY HISTORY
-# ============================================================
-
-if (
-    st.session_state.mode == "Sensor Stream Replay"
-    and st.session_state.sensor_history
-):
 
     st.divider()
 
@@ -1328,6 +1252,13 @@ if (
         use_container_width=True,
         hide_index=True
     )
+
+
+# ============================================================
+# RUN SENSOR REPLAY
+# ============================================================
+
+sensor_replay()
 
 
 # ============================================================
