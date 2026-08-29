@@ -29,3 +29,5 @@ Thumbs.db
 ngrok.yml
 
 .streamlit/secrets.toml
+
+frontend/.streamlit/
