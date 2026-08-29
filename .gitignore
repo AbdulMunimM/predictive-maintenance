@@ -27,3 +27,5 @@ Thumbs.db
 
 # Local deployment files
 ngrok.yml
+
+.streamlit/secrets.toml
